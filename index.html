@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Op-Amp Smart Virtual Lab</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<style>
+body{font-family:Arial;background:#f4f6f8;margin:20px}
+.box{background:#fff;padding:15px;margin-bottom:20px;border-radius:8px;box-shadow:0 2px 5px rgba(0,0,0,.2)}
+table,th,td{border:1px solid #000;border-collapse:collapse;padding:6px;text-align:center}
+input,select,button,textarea{padding:6px;margin:5px}
+img{width:360px;border:1px solid #ccc}
+.ok{color:green;font-weight:bold}
+.err{color:red;font-weight:bold}
+.guide{background:#fff3cd;padding:10px;border-radius:6px;margin-top:10px}
+.expect{color:#0066cc;font-weight:bold}
+</style>
+</head>
+
+<body>
+
+<h1>Op-Amp Virtual Laboratory (Instant Feedback)</h1>
+
+<div class="box">
+<h3>Select Experiment</h3>
+<select id="expType" onchange="loadCircuit()">
+<option value="">--Select--</option>
+<option value="inv">Inverting Amplifier</option>
+<option value="noninv">Non-Inverting Amplifier</option>
+</select>
+
+<div id="circuitDiv" style="display:none;">
+<h4>Circuit Diagram</h4>
+<img id="circuitImage">
+<p id="pinConfig"></p>
+<button onclick="showDesign()">Design</button>
+</div>
+</div>
+
+<div id="designDiv" class="box" style="display:none;">
+<h3>Design & Formula</h3>
+<div id="formulaBox"></div>
+R1 (Ω): <input type="number" id="R1" value="1000">
+R2 (Ω): <input type="number" id="R2" value="10000">
+<button onclick="calculate()">Calculate Gain</button>
+<div id="result"></div>
+</div>
+
+<div id="procedureDiv" class="box" style="display:none;">
+<h3>Procedure</h3>
+<ol id="procedureList"></ol>
+</div>
+
+<div id="verifyDiv" class="box" style="display:none;">
+<h3>Verification of Connections</h3>
+<div id="verifyList"></div>
+</div>
+
+<div id="dataDiv" class="box" style="display:none;">
+<h3>Observation Table (Instant Check)</h3>
+<table id="dataTable">
+<tr>
+<th>Vin (V)</th>
+<th>Vout (V)</th>
+<th>Check</th>
+<th>Status</th>
+</tr>
+</table>
+<button onclick="addRow()">Add Row</button>
+<div id="guideBox"></div>
+<canvas id="graphCanvas"></canvas>
+</div>
+
+<div id="vivaDiv" class="box" style="display:none;">
+<h3>Viva</h3>
+<div id="vivaForm"></div>
+<button onclick="generatePDF()">Download PDF</button>
+</div>
+
+<script>
+const experiments={
+ inv:{
+  img:"images/inverting.png",
+  formula:"Av = - R2 / R1",
+  pin:"Pin 2 = −, Pin 3 = +, Pin 6 = Output",
+  procedure:["Connect R1 from Vin to −","Connect R2 from output to −","Ground +","Apply ±12V","Measure output"],
+  verify:["R1 to −","R2 feedback","+ grounded","Power connected"]
+ },
+ noninv:{
+  img:"images/noninverting.png",
+  formula:"Av = 1 + (R2 / R1)",
+  pin:"Pin 3 = +, Pin 2 = −, Pin 6 = Output",
+  procedure:["Vin to +","R1 to ground","R2 feedback","Apply ±12V","Measure output"],
+  verify:["Vin to +","Feedback OK","Ground OK","Power OK"]
+ }
+};
+
+const vivaPool=["What is op-amp?","What is gain?","Define virtual ground","What is feedback?","What is saturation?"];
+let lastExpected = {};
+
+function loadCircuit(){
+ let t=expType.value;
+ circuitDiv.style.display="block";
+ circuitImage.src=experiments[t].img;
+ pinConfig.innerHTML="<b>Pin Configuration:</b> "+experiments[t].pin;
+}
+
+function showDesign(){
+ let t=expType.value;
+ designDiv.style.display="block";
+ procedureDiv.style.display="block";
+ verifyDiv.style.display="block";
+
+ formulaBox.innerHTML="<b>Formula:</b> "+experiments[t].formula;
+
+ procedureList.innerHTML="";
+ experiments[t].procedure.forEach(p=>procedureList.innerHTML+=`<li>${p}</li>`);
+
+ verifyList.innerHTML="";
+ experiments[t].verify.forEach(v=>verifyList.innerHTML+=`<div><input type="checkbox"> ${v}</div>`);
+}
+
+function calculate(){
+ let R1v=+R1.value, R2v=+R2.value;
+ let gain = expType.value=="inv"?-R2v/R1v:(1+R2v/R1v);
+ result.innerHTML="<b>Gain:</b> "+gain.toFixed(2);
+
+ dataDiv.style.display="block";
+ dataTable.innerHTML="<tr><th>Vin</th><th>Vout</th><th>Check</th><th>Status</th></tr>";
+ addRow(); addRow();
+}
+
+function addRow(){
+ let r=dataTable.insertRow();
+ r.insertCell(0).innerHTML="<input type='number' step='any'>";
+ r.insertCell(1).innerHTML="<input type='number' step='any'>";
+ r.insertCell(2).innerHTML="<button onclick='checkRow(this)'>Check This Row</button>";
+ r.insertCell(3).innerHTML="-";
+}
+
+function checkRow(btn){
+ let row = btn.parentElement.parentElement;
+ let vin = parseFloat(row.cells[0].children[0].value);
+ let vout = parseFloat(row.cells[1].children[0].value);
+ let R1v=+R1.value, R2v=+R2.value;
+ let gain = expType.value=="inv"?-R2v/R1v:(1+R2v/R1v);
+ let expected = gain*vin;
+
+ if(isNaN(vin)||isNaN(vout)){ alert("Enter Vin and Vout"); return; }
+
+ let err = Math.abs((vout-expected)/(expected||1))*100;
+
+ if(err<5){
+  row.cells[3].innerHTML="<span class='ok'>✔ Correct</span>";
+  guideBox.innerHTML="";
+ } else {
+  row.cells[3].innerHTML="<span class='err'>❌ Wrong</span>";
+  lastExpected={vin:vin, vout:expected, vr1:Math.abs(vin), vr2:Math.abs(expected-vin), vp:12, vm:-12};
+
+  guideBox.innerHTML=`
+  <div class="guide">
+  <b>Output Wrong → Measure & Enter These Voltages</b><br><br>
+
+  Vin at op-amp pin 
+  <span class="expect">(Expected: ${lastExpected.vin.toFixed(2)} V)</span>
+  <input id="mvin"><br>
+
+  Voltage across R1 
+  <span class="expect">(Expected: ${lastExpected.vr1.toFixed(2)} V)</span>
+  <input id="mr1"><br>
+
+  Voltage across R2 
+  <span class="expect">(Expected: ${lastExpected.vr2.toFixed(2)} V)</span>
+  <input id="mr2"><br>
+
+  Output voltage 
+  <span class="expect">(Expected: ${lastExpected.vout.toFixed(2)} V)</span>
+  <input id="mvout"><br>
+
+  +V supply <span class="expect">(+12 V)</span> <input id="mvp"><br>
+  -V supply <span class="expect">(-12 V)</span> <input id="mvm"><br><br>
+
+  <button onclick="analyze()">Analyze Mistake</button>
+  <div id="analysisResult"></div>
+  </div>`;
+ }
+}
+
+function near(a,b){ return Math.abs(a-b) <= 0.1*Math.abs(b||1); }
+
+function analyze(){
+ let msg="";
+ if(!near(+mvp.value,12)) msg+="❌ Positive supply missing<br>";
+ if(!near(+mvm.value,-12)) msg+="❌ Negative supply missing<br>";
+ if(!near(+mvin.value,lastExpected.vin)) msg+="❌ Input not reaching op-amp pin<br>";
+ if(!near(+mr1.value,lastExpected.vr1)) msg+="❌ R1 connection/value wrong<br>";
+ if(!near(+mr2.value,lastExpected.vr2)) msg+="❌ R2 feedback wrong<br>";
+ if(!near(+mvout.value,lastExpected.vout)) msg+="❌ Output pin/load wrong<br>";
+
+ if(msg==="") msg="✔ Connections correct. Re-check resistor values or op-amp orientation.";
+ analysisResult.innerHTML=msg;
+}
+
+function generateViva(){
+ let html="";
+ vivaPool.sort(()=>0.5-Math.random()).slice(0,5).forEach((q,i)=>{
+  html+=`<p><b>Q${i+1}.</b> ${q}</p><textarea rows="2"></textarea>`;
+ });
+ vivaForm.innerHTML=html;
+ vivaDiv.style.display="block";
+}
+
+async function generatePDF(){
+ const { jsPDF } = window.jspdf;
+ let doc=new jsPDF();
+ await doc.html(document.body,{callback:d=>d.save("OpAmp_Lab_Report.pdf"),x:10,y:10,html2canvas:{scale:0.4}});
+}
+</script>
+
+</body>
+</html>
